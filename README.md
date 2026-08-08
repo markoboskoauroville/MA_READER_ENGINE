@@ -76,7 +76,7 @@ is now a question of when each app picks a change up, never of which version is 
 | File | What it is |
 |---|---|
 | `MaEdgeVoice.kt` | The Edge speech WebSocket client. Voice and text in, audio plus word boundaries out. **Done, and proven against the live service.** |
-| `MaAlign.kt` | The port of `align_tokens` and `refine_tokens` from MA Reader v26. **Not written yet.** |
+| `MaAlign.kt` | The port of `align_tokens` from MA Reader v26. **Done, cross-checked against the Python.** `refine_tokens` is not ported yet. |
 
 Nothing else. Anything that knows about a keyboard, an Activity, a WebView or a Compose theme belongs
 in the app that has one, not here. The test for whether something belongs: **both apps must need it,
@@ -173,3 +173,51 @@ Four, no more. Two languages, female and male in each.
 |---|---|---|
 | English (UK) | `en-GB-SoniaNeural` | `en-GB-RyanNeural` |
 | Croatian | `hr-HR-GabrijelaNeural` | `hr-HR-SreckoNeural` |
+
+## The alignment, and how it is checked
+
+`MaAlign.alignTokens` is a port of `align_tokens`, branch for branch. It is checked against the
+thing it was ported from rather than against anybody's expectation: `align_vectors.json` holds 21
+cases run through MA Reader v26's own Python, and the Kotlin must reproduce every character offset
+exactly and every time to within a nanosecond. Seven cases carry real boundaries captured from the
+live service in both languages, chosen for what breaks matching: numbers, times, dates, currency,
+acronyms and Croatian diacritics. The rest reach branches the service will not produce on demand.
+
+Regenerate the vectors with `mkvectors.py` if the reference itself changes. Never edit them by hand:
+a hand-edited vector is a test that agrees with whoever edited it.
+
+**The cross-check earned its place immediately.** The first run differed in one case out of 21. The
+reference returns straight out of its no-match branch, skipping the pass that derives end times, and
+the port had helpfully sent that path through the same ending as every other one. It looks tidier
+and it is wrong: with no clip length known it cuts the last word to its own start plus 0.4 s, shorter
+than the spread it was just given. Nothing about that is visible by reading the two side by side.
+
+Two Kotlin details that would otherwise diverge silently from Python, both handled and both worth
+knowing before touching `norm`:
+
+- Java's `\S` is ASCII only unless asked, so the token regex carries `(?U)`. Without it a
+  non-breaking space in a pasted article makes the two implementations disagree about where words
+  even are.
+- Python's `str.isalnum()` is wider than Kotlin's `isLetterOrDigit()`: it also counts numeric
+  characters like ½ and Ⅷ.
+
+### One thing to look at, not yet changed
+
+In the proven sentence, the tokens `8.` and `25` come out with a start time equal to their end time,
+so they are lit for zero seconds and the highlight steps from `je` straight to `mjesec`. This falls
+out of the reference honestly: the number and the word after it arrive as one boundary, that
+boundary's span is handed to the number, and the tidying pass then trims it back to where the next
+word starts.
+
+This is reported rather than fixed. The port is faithful and should stay that way until Marko says
+otherwise, and `refine_tokens` has not been ported yet, so it is not yet known whether the waveform
+pass moves these onsets apart in practice. But a number that never lights is worth a decision, since
+the lit word is the point of the whole thing.
+
+## Still to port
+
+`refine_tokens`, `measure_silence` and the envelope machinery around them: the v11 and v23 engine
+that listens to the finished clip and pins every word to the real waveform, worth an 80 ms to 18 ms
+improvement in the reference's own measurements. It needs decoded PCM, which is the one part of this
+that cannot be app agnostic on its own. Give it an interface the app implements, so the maths stays
+here and testable and only the decoding lives in the app.

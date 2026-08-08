@@ -1,4 +1,4 @@
-name: Voice client proof
+name: Engine proof
 
 # This engine talks to a Microsoft endpoint nobody here controls. The security token is a hash of
 # the current time, the accepted Chromium version moves, and the word boundaries the whole highlight
@@ -32,7 +32,7 @@ jobs:
       - name: Fetch the Kotlin compiler and the libraries
         run: |
           set -eu
-          mkdir -p tools && cd tools
+          mkdir -p .toolchain && cd .toolchain
           curl -sSL -o kotlin.zip \
             https://github.com/JetBrains/kotlin/releases/download/v2.3.20/kotlin-compiler-2.3.20.zip
           unzip -q kotlin.zip
@@ -60,21 +60,25 @@ jobs:
       - name: Compile
         run: |
           set -eu
-          CP=$(ls tools/m2/*.jar | grep -v junit-platform-console | tr '\n' ':')
-          tools/kotlinc/bin/kotlinc -cp "$CP" -nowarn \
+          CP=$(ls .toolchain/m2/*.jar | grep -v junit-platform-console | tr '\n' ':')
+          .toolchain/kotlinc/bin/kotlinc -jvm-target 17 -cp "$CP" -nowarn \
             $(find engine/src -name '*.kt') -d out
+          # The alignment vectors are loaded from the classpath, so they have to sit beside the
+          # classes. Without this the cross-check finds no file and every case is skipped.
+          cp -r engine/src/test/resources/. out/
 
-      - name: Speak a Croatian sentence with a number in it
+      - name: Speak a Croatian sentence, and check the alignment against the Python
         env:
           TTT_LIVE_VOICE: '1'
         run: |
           set -eu
-          CP=$(ls tools/m2/*.jar | grep -v junit-platform-console | tr '\n' ':')tools/kotlinc/lib/kotlin-stdlib.jar
+          CP=$(ls .toolchain/m2/*.jar | grep -v junit-platform-console | tr '\n' ':').toolchain/kotlinc/lib/kotlin-stdlib.jar
           run_proof() {
             java -Dfile.encoding=UTF-8 \
-              -jar tools/m2/junit-platform-console-standalone-1.11.4.jar execute \
+              -jar .toolchain/m2/junit-platform-console-standalone-1.11.4.jar execute \
               -cp "out:$CP" \
               --select-class=dev.mantraproductions.reader.engine.MaEdgeVoiceTest \
+              --select-class=dev.mantraproductions.reader.engine.MaAlignTest \
               --details=tree
           }
           # One retry. The live call is a real network round trip to somebody else's service and it
