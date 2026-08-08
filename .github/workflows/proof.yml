@@ -1,0 +1,83 @@
+name: Voice client proof
+
+# This engine talks to a Microsoft endpoint nobody here controls. The security token is a hash of
+# the current time, the accepted Chromium version moves, and the word boundaries the whole highlight
+# depends on are NOT the service default. None of that is visible in a compile, so every push speaks
+# a real Croatian sentence with a number in it and prints the boundaries that came back.
+#
+# Built with kotlinc directly rather than Gradle. This module has no Android in it and no wrapper of
+# its own: fetching the compiler and four jars is faster, has nothing to go stale, and is exactly
+# how the client was verified when it was written.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  # The endpoint can change under us without anything here changing, so check it on a schedule too.
+  # Finding out from a nightly run is much better than finding out from Marko.
+  schedule:
+    - cron: '0 6 * * *'
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Fetch the Kotlin compiler and the libraries
+        run: |
+          set -eu
+          mkdir -p tools && cd tools
+          curl -sSL -o kotlin.zip \
+            https://github.com/JetBrains/kotlin/releases/download/v2.3.20/kotlin-compiler-2.3.20.zip
+          unzip -q kotlin.zip
+          mkdir -p m2 && cd m2
+          M=https://repo1.maven.org/maven2
+          for a in \
+            "com/squareup/okhttp3/okhttp-jvm/5.3.0/okhttp-jvm-5.3.0.jar" \
+            "com/squareup/okio/okio-jvm/3.16.0/okio-jvm-3.16.0.jar" \
+            "org/jetbrains/kotlinx/kotlinx-serialization-json-jvm/1.11.0/kotlinx-serialization-json-jvm-1.11.0.jar" \
+            "org/jetbrains/kotlinx/kotlinx-serialization-core-jvm/1.11.0/kotlinx-serialization-core-jvm-1.11.0.jar" \
+            "org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.10.2/kotlinx-coroutines-core-jvm-1.10.2.jar" \
+            "org/jetbrains/kotlinx/kotlinx-coroutines-test-jvm/1.10.2/kotlinx-coroutines-test-jvm-1.10.2.jar" \
+            "org/jetbrains/kotlin/kotlin-reflect/2.2.21/kotlin-reflect-2.2.21.jar" \
+            "io/kotest/kotest-framework-engine-jvm/6.1.11/kotest-framework-engine-jvm-6.1.11.jar" \
+            "io/kotest/kotest-assertions-core-jvm/6.1.11/kotest-assertions-core-jvm-6.1.11.jar" \
+            "io/kotest/kotest-assertions-shared-jvm/6.1.11/kotest-assertions-shared-jvm-6.1.11.jar" \
+            "io/kotest/kotest-common-jvm/6.1.11/kotest-common-jvm-6.1.11.jar" \
+            "io/kotest/kotest-runner-junit5-jvm/6.1.11/kotest-runner-junit5-jvm-6.1.11.jar" \
+            "io/kotest/kotest-runner-junit-platform-jvm/6.1.11/kotest-runner-junit-platform-jvm-6.1.11.jar" \
+            "org/junit/platform/junit-platform-console-standalone/1.11.4/junit-platform-console-standalone-1.11.4.jar" \
+          ; do
+            curl -sSL --fail -O "$M/$a"
+          done
+
+      - name: Compile
+        run: |
+          set -eu
+          CP=$(ls tools/m2/*.jar | grep -v junit-platform-console | tr '\n' ':')
+          tools/kotlinc/bin/kotlinc -cp "$CP" -nowarn \
+            $(find engine/src -name '*.kt') -d out
+
+      - name: Speak a Croatian sentence with a number in it
+        env:
+          TTT_LIVE_VOICE: '1'
+        run: |
+          set -eu
+          CP=$(ls tools/m2/*.jar | grep -v junit-platform-console | tr '\n' ':')tools/kotlinc/lib/kotlin-stdlib.jar
+          run_proof() {
+            java -Dfile.encoding=UTF-8 \
+              -jar tools/m2/junit-platform-console-standalone-1.11.4.jar execute \
+              -cp "out:$CP" \
+              --select-class=dev.mantraproductions.reader.engine.MaEdgeVoiceTest \
+              --details=tree
+          }
+          # One retry. The live call is a real network round trip to somebody else's service and it
+          # dropped once in about a dozen local runs. A single blip should not read as the protocol
+          # being broken; two failures in a row is worth looking at.
+          run_proof || { echo "first attempt failed, retrying once"; sleep 15; run_proof; }
