@@ -79,6 +79,7 @@ jobs:
               -cp "out:$CP" \
               --select-class=dev.mantraproductions.reader.engine.MaEdgeVoiceTest \
               --select-class=dev.mantraproductions.reader.engine.MaAlignTest \
+              --select-class=dev.mantraproductions.reader.engine.MaEngineTest \
               --details=tree
           }
           # One retry. The live call is a real network round trip to somebody else's service and it

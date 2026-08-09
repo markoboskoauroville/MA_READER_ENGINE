@@ -76,7 +76,9 @@ is now a question of when each app picks a change up, never of which version is 
 | File | What it is |
 |---|---|
 | `MaEdgeVoice.kt` | The Edge speech WebSocket client. Voice and text in, audio plus word boundaries out. **Done, and proven against the live service.** |
-| `MaAlign.kt` | The port of `align_tokens` from MA Reader v26. **Done, cross-checked against the Python.** `refine_tokens` is not ported yet. |
+| `MaAlign.kt` | The port of `align_tokens` from MA Reader v26. **Done, cross-checked against the Python.** |
+| `MaText.kt` | `clean_text` and `split_units`: Markdown and addresses out, sentences into speakable units. **Done.** |
+| `MaWaveform.kt` | `refine_tokens` and the envelope machinery: every word moved onto where it is actually spoken. **Done.** |
 
 Nothing else. Anything that knows about a keyboard, an Activity, a WebView or a Compose theme belongs
 in the app that has one, not here. The test for whether something belongs: **both apps must need it,
@@ -214,10 +216,40 @@ otherwise, and `refine_tokens` has not been ported yet, so it is not yet known w
 pass moves these onsets apart in practice. But a number that never lights is worth a decision, since
 the lit word is the point of the whole thing.
 
-## Still to port
+## The waveform pass
 
-`refine_tokens`, `measure_silence` and the envelope machinery around them: the v11 and v23 engine
-that listens to the finished clip and pins every word to the real waveform, worth an 80 ms to 18 ms
-improvement in the reference's own measurements. It needs decoded PCM, which is the one part of this
-that cannot be app agnostic on its own. Give it an interface the app implements, so the maths stays
-here and testable and only the decoding lives in the app.
+`MaWaveform.refine` listens to the finished clip and moves every word onto where it is actually
+spoken. The engine's own boundaries describe what the synthesiser intended rather than what came out
+of the encoder, and they are systematically late; the reference measured a mean error of about 80 ms
+falling to about 18 ms with this pass, and around 150 ms on words opening with s, sh or f.
+
+**It takes decoded PCM, not a file.** The reference shells out to ffmpeg, which an app cannot do, and
+the maths does not care where the samples came from. The caller decodes to mono 16-bit at 16 kHz
+(MediaCodec on Android) and hands over a `ShortArray`. That is the whole reason this can live in a
+module with no Android in it and still be tested in seconds.
+
+Two things in here look like details and are not:
+
+- **Two envelopes, not one.** A word does not begin at its loudest point: `Sunce` begins at the s,
+  `first` at the f. Those consonants carry real energy but almost none of it is low frequency, so a
+  broadband envelope alone puts the word at the vowel, up to 150 ms late. The second band is
+  pre-emphasised and sees them.
+- **Onsets are matched to words by dynamic programming**, not by nearest neighbour. Not every rise is
+  a word and not every word has a rise, since words inside a continuous phrase have no onset of their
+  own, so either side may be skipped at a price. Greedy matching cannot see the consequence of a
+  choice two words later; the global view can.
+
+**On any trouble the original tokens come back untouched**, and that is deliberate. A highlight
+running on the engine's timing is slightly late. A highlight running on a failed measurement is
+anywhere at all.
+
+## Checking the maths without a recording
+
+The waveform vectors are synthesised rather than recorded. A generated signal with known word
+positions hits every branch that matters: a fricative opening, a shouted word among quiet ones, a
+long pause, a clip that starts on speech with no lead-in, and a continuous phrase where the middle
+word has no onset at all. One real recording would reach maybe two of those, and would still only
+prove the maths it happened to touch.
+
+126 tests run in the engine now: 9 offline on the speech protocol, 1 live, and the rest cross-checked
+against MA Reader v26's own Python for alignment, text and waveform.
